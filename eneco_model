@@ -1,10 +1,17 @@
+% Jules's Note: This script is written for MATLAB/Octave.
+% The execution environment does not have MATLAB/Octave installed, so this script cannot be run to verify the fixes.
+% The script also requires two data files which are not present:
+% - 2020_coefficients_20quinq.csv
+% - Tables - revised 2.xlsx
+
 %% Clear Environment
 clearvars;    % Clear all variables
 close all;    % Close all figures
 clc;          % Clear Command Window
 
 %% Set the working directory
-cd('C:/Users/marco/My Drive/New Publications/Energy Economics 2024/Model');
+% cd('C:/Users/marco/My Drive/New Publications/Energy Economics 2024/Model');
+% Jules's Note: The script assumes that the data files are in the same directory as the script.
 
 %% Set sources of data
 Source1 = '2020_coefficients_20quinq.csv';
@@ -77,10 +84,10 @@ n_adjs_cell = Data(2:21, 36);
 n_adjs = cellfun(@(x) double(string(x)), n_adjs_cell);
 
 %% Upload initial values of stocks
-bs_data = readmatrix(Source2, 'Sheet', 'BS_Matrix', 'Range', 'B1:H10');
+bs_data = readmatrix(Source2, 'Sheet', 'BS_Matrix', 'Range', 'B2:H11');
 
 %% Upload initial values of flows
-tfm_data = readmatrix(Source2, 'Sheet', 'TFM_Matrix', 'Range', 'B1:I20');
+tfm_data = readmatrix(Source2, 'Sheet', 'TFM_Matrix', 'Range', 'B2:I21');
 
 %% Upload initial values of interest rates
 int_data = readmatrix(Source2, 'Sheet', 'TFM_Matrix', 'Range', 'O2:O8');
@@ -504,6 +511,68 @@ for z1 = 1:nIndustries
 end
 
 
+%% Initialize period 1
+for j = 1:nScenarios
+    % Set initial aggregate values for period 1
+    cw(j,1) = cw0;
+    cz(j,1) = cz0;
+    id(j,1) = id0;
+    gov(j,1) = gov0;
+    ex(j,1) = ex0;
+    im(j,1) = im0;
+    yn(j,1) = yn0;
+    wb(j,1) = wb0;
+    tax(j,1) = tax0;
+    taxw(j,1) = taxw0;
+    taxz(j,1) = taxz0;
+    def(j,1) = 0; % No deficit in the initial period
+
+    % Distribute investment and capital by industry shares
+    id_j(j,1,:) = id0 * squeeze(iota(j,1,:));
+    k_j(j,1,:) = k0 * squeeze(iota(j,1,:));
+
+    % Calculate initial final demand vector d(j,1,:)
+    d(j,1,:) = squeeze(betaw(j,1,:)) * cw(j,1) + squeeze(betaz(j,1,:)) * cz(j,1) + ...
+                squeeze(iota(j,1,:)) * id(j,1) + squeeze(gov_j(j,1,:)) + ...
+                squeeze(chi(j,1,:)) * ex(j,1);
+
+    % Calculate initial gross output vector x(j,1,:)
+    Leontief_inv = eye(nIndustries) - squeeze(A4(j,1,:,:));
+    if rcond(Leontief_inv) < eps
+        % Handle singular matrix case if necessary, though unlikely with real data
+        x(j,1,:) = zeros(1, nIndustries);
+        warning('Initial Leontief matrix is singular. Initial output set to zero.');
+    else
+        x(j,1,:) = Leontief_inv \ squeeze(d(j,1,:));
+    end
+
+    % Initialize employment and natural output
+    n(j,1,:) = squeeze(x(j,1,:)) .* squeeze(lab(j,1,:)) + squeeze(n_adj(j,1,:));
+    xN(j,1,:) = x(j,1,:);
+
+    % Initialize industry-level target capital stock
+    % Note: prices p(j,1,:) and pid(j,1) are all 1 at this stage.
+    kt_j(j,1,:) = squeeze(kappa(j,1,:)) .* squeeze(x(j,1,:));
+
+    % Initialize other financial variables for period 1 to be consistent
+    paymw_b(j,1) = paymw_b0;
+    paymz_b(j,1) = paymz_b0;
+    paymb_b(j,1) = paymb_b0;
+    paymf_b(j,1) = paymf_b0;
+    paym_b(j,1) = paym_b0;
+    paymw_h(j,1) = paymw_h0;
+    paymz_h(j,1) = paymz_h0;
+    paym_h(j,1) = paym_h0;
+    paym_l(j,1) = paym_l0;
+    paymw_e(j,1) = paymw_e0;
+    paymz_e(j,1) = paymz_e0;
+    paym_e(j,1) = paym_e0;
+    paymw_q(j,1) = paymw_q0;
+    paymz_q(j,1) = paymz_q0;
+    paym_q(j,1) = paym_q0;
+end
+
+
 %% Create a progress bar equivalent (text-based)
 totalSteps = nScenarios * (nPeriods-1);
 fprintf('Progress: 0%%');
@@ -520,11 +589,11 @@ for j = 1:nScenarios
         fprintf('\b\b\b\b%3d%%', progressPercent);
         
         % Scenario 2: higher share of renewable energy and green productions following 100 bn government spending
-        if j == 2 && i > 16 && i < nPeriods
+        if j == 2 && i >= 17 && i <= 26
             logisticTerm = 1 / (1 + exp(-0.75 * (i - 21)));
             logisticDeriv = 0.75 * exp(-0.75 * (i - 21)) / (1 + exp(-0.75 * (i - 21)))^2;
             
-            % Effects on renewable energy variables
+            % Effects on renewable energy variables (state determined in i, effective in i+1)
             renewD(j, i+1) = 0.4 + 0.25 * logisticTerm;
             renewA(j, i+1) = 0.2 + 0.05 * logisticTerm;
             renewE(j, i+1) = 0.5 + 0.05 * logisticTerm;
@@ -532,28 +601,16 @@ for j = 1:nScenarios
             renewH(j, i+1) = 0.8 + 0.05 * logisticTerm;
             
             % Government spending adjustments for renewable sources
-            % Note: Using element-wise operations assuming indexing matches
-            g0_j(j, 17:26, 5) = zeta(j, i, 5) * gov0 + ...
-                (0.27 * 115 * logisticDeriv + ...
-                - (gov_j(j, i-1, 5) - zeta(j, i-1, 5) * gammag(j, i) * (def(j, i-1) / pg(j, i-1))));
+            % Jules's note: Corrected the logic to apply the shock to the current period `i`
+            % instead of a fixed slice, and adjusted the time window of the shock.
+            % The shock is now modeled as an addition to the baseline spending.
+            g0_j(j, i, 5) = 0.27 * 115 * logisticDeriv;
+            g0_j(j, i, 1) = 0.08 * 115 * logisticDeriv;
+            g0_j(j, i, 6) = 0.17 * 115 * logisticDeriv;
+            g0_j(j, i, 7) = 0.18 * 115 * logisticDeriv;
+            g0_j(j, i, 9) = 0.30 * 115 * logisticDeriv;
             
-            g0_j(j, 17:26, 1) = zeta(j, i, 1) * gov0 + ...
-                (0.08 * 115 * logisticDeriv + ...
-                - (gov_j(j, i-1, 1) - zeta(j, i-1, 1) * gammag(j, i) * (def(j, i-1) / pg(j, i-1))));
-            
-            g0_j(j, 17:26, 6) = zeta(j, i, 6) * gov0 + ...
-                (0.17 * 115 * logisticDeriv + ...
-                - (gov_j(j, i-1, 6) - zeta(j, i-1, 6) * gammag(j, i) * (def(j, i-1) / pg(j, i-1))));
-            
-            g0_j(j, 17:26, 7) = zeta(j, i, 7) * gov0 + ...
-                (0.18 * 115 * logisticDeriv + ...
-                - (gov_j(j, i-1, 7) - zeta(j, i-1, 7) * gammag(j, i) * (def(j, i-1) / pg(j, i-1))));
-            
-            g0_j(j, 17:26, 9) = zeta(j, i, 9) * gov0 + ...
-                (0.30 * 115 * logisticDeriv + ...
-                - (gov_j(j, i-1, 9) - zeta(j, i-1, 9) * gammag(j, i) * (def(j, i-1) / pg(j, i-1))));
-            
-            % Update gammag
+            % Update gammag (austerity parameter)
             gammag(j, i) = 0.02;
         end
         
